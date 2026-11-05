@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a self-contained DSH student skill bundle; no dependencies or install scripts."""
 import argparse
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -15,13 +16,13 @@ REVIEWED_DEV_RESOURCE = {
     "student/general/xiaozhi-learning-dna/schemas/validate.js":
         "fad1ff6d385afc5233848865cab1474b49b499fe7e14e0a5dacf4a37c9a369c2"
 }
-INTRO = """## DSH Web 运行约定（dsh-web-1）
+INTRO = """## DSH Web 运行约定（dsh-web-2）
 
-开始教学前读取本技能目录的 `dsh-platform.md`。当前模型直接读取会话照片，无须 agent-photo-question 或额外 OCR。
+开始教学前读取本技能目录的 `dsh-platform.md`。使用当前会话实际可用的图片理解能力，不绑定模型厂商和型号。
 看不清的数字、符号、图形条件先确认；不按画面比例补条件，沿用学生已经给出的题干和步骤。
 只调用当前会话实际提供的工具，跨技能时按准确名字加载，不把 depends_on/JSON 交接当执行结果。
-本实例未接入隔离学生档案、历史统计、主动提醒服务：M/X/T 按缺失处理；不向 Mnemon 写入学生档案，不读写长期学生记录，不声称已入队/已推送。
-周报仅用本次会话或用户提供的数据。Word 等文件仅按用户要求调用已安装的官方 Office 技能和 load_workspace_dependencies。
+本适配包不提供长期档案、历史统计、主动提醒后端：M/X/T 默认按缺失处理；不以通用记忆工具代替档案权限，不声称已入队或推送。
+周报仅用本次会话或用户提供的数据。文档仅按用户要求使用实际可用的官方 Office 技能及依赖加载工具。
 平台工具能力以上述约定和实际可用工具为准，教学与授权规则继续遵守下文及 shared 中的上游约定。
 
 ---
@@ -56,7 +57,7 @@ def build(output):
         front, body = match.groups()
         if re.search(r"^(user-invocable|disable-model-invocation):", front, re.M):
             raise ValueError("Review upstream invocation policy before overriding")
-        front = re.sub(r"^compatibility:.*$", "compatibility: DeepSeek Harness Web 0.2.1-rc.5 (dsh-web-1)", front, flags=re.M)
+        front = re.sub(r"^compatibility:.*$", "compatibility: DeepSeek Harness Web 0.2.1-rc.5 (dsh-web-2)", front, flags=re.M)
         front += "\nuser-invocable: true\n"
         if name in MANUAL_ONLY:
             front += "disable-model-invocation: true\n"
@@ -100,8 +101,8 @@ def build(output):
     commit = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
     dirty = bool(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=all"], text=True).strip())
     manifest = {
-        "adaptation": "dsh-web-1", "upstream": "https://github.com/qizhitang/xiaozhi-skills",
-        "fork": "https://github.com/zhw2577/xiaozhi-skills", "source_commit": commit,
+        "adaptation": "dsh-web-2", "upstream": "https://github.com/qizhitang/xiaozhi-skills",
+        "source_commit": commit,
         "upstream_commit": "c6d628d0602d16585be31abb17bfc4ea0c725b01", "source_dirty": dirty,
         "upstream_version": json.loads((ROOT / "package.json").read_text())["version"],
         "source_note": "Built from fork working tree; source_commit/source_dirty describe build provenance, and file hashes identify the installed resources",
@@ -110,11 +111,19 @@ def build(output):
         "files": {p.relative_to(packages).as_posix(): sha256(p) for p in sorted(packages.rglob("*")) if p.is_file()},
     }
     (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    archive = output / "xiaozhi-dsh-student-dsh-web-1.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(packages, arcname="skills")
-        tar.add(output / "manifest.json", arcname="manifest.json")
-    print(json.dumps({"skills": len(entries), "files": len(manifest["files"]), "manual_only": sorted(MANUAL_ONLY), "archive": str(archive), "sha256": sha256(archive)}, ensure_ascii=False))
+    archive = output / "xiaozhi-dsh-student-dsh-web-2.tar.gz"
+    def private_metadata_filter(info):
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        info.mtime = 0
+        info.mode = 0o700 if info.isdir() else 0o600
+        return info
+    with archive.open("wb") as raw_archive:
+        with gzip.GzipFile(filename="", fileobj=raw_archive, mode="wb", mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as tar:
+                tar.add(packages, arcname="skills", filter=private_metadata_filter)
+                tar.add(output / "manifest.json", arcname="manifest.json", filter=private_metadata_filter)
+    print(json.dumps({"skills": len(entries), "files": len(manifest["files"]), "manual_only": sorted(MANUAL_ONLY), "archive": archive.name, "sha256": sha256(archive)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

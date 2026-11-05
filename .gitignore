@@ -11,3 +11,6 @@ node_modules/
 # publish tooling: runtime artifacts stay out (default work dir is ~/.xiaozhi-publish/work, this guards local overrides)
 scripts/publish/.work/
 scripts/publish/__pycache__/
+
+# Private local configuration and operational records
+/.private/
